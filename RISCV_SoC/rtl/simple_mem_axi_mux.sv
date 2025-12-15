@@ -1,4 +1,4 @@
-module simple_mem_axi #(
+module simple_mem_axi_mux #(
     parameter MEM_WORDS = 131072, //128KiB (MEM_WORDS * 4 bytes) (till address 0x00020000)
     parameter ROM_ORIGIN = 32'h00000000,
     parameter ROM_LENGTH = 32'h00010000, // 64 KiB
@@ -10,27 +10,7 @@ module simple_mem_axi #(
 
 	// AXI4-lite slave memory interface
 
-	input  logic        mem_axi_awvalid,
-	output logic        mem_axi_awready,
-	input  logic [31:0] mem_axi_awaddr,
-	input  logic [ 2:0] mem_axi_awprot,
-
-	input  logic        mem_axi_wvalid,
-	output logic        mem_axi_wready,
-	input  logic [31:0] mem_axi_wdata,
-	input  logic [ 3:0] mem_axi_wstrb,
-
-	output logic        mem_axi_bvalid,
-	input  logic        mem_axi_bready,
-
-	input  logic        mem_axi_arvalid,
-	output logic        mem_axi_arready,
-	input  logic [31:0] mem_axi_araddr,
-	input  logic [ 2:0] mem_axi_arprot,
-
-	output logic        mem_axi_rvalid,
-	input  logic        mem_axi_rready,
-	output logic [31:0] mem_axi_rdata
+	axi_interf.slave mem_axi
 );
 
 //note: need to implement support for unaligned addresses
@@ -54,26 +34,26 @@ module simple_mem_axi #(
 		if (!resetn) begin 
 			mem_read_buffer <= 0;
 			mem_read_addr_buffer <= 0;
-			mem_axi_rvalid <= 0;
-			mem_axi_rdata <= 0;
-			mem_axi_arready <= 1; //note, you'll need to control arready even during write logic, hence im not setting it to anything in the read_capture fsm
+			mem_axi.rvalid <= 0;
+			mem_axi.rdata <= 0;
+			mem_axi.arready <= 1; //note, you'll need to control arready even during write logic, hence im not setting it to anything in the read_capture fsm
 			//further note: the fsm wont move on from read_capture state unless you reset it once. this is because arread is left floating till reset is applied
 			read_fsm <= read_capture;
 		end else begin 
 			case (read_fsm)
 				read_capture: begin 
-					mem_axi_rvalid <= 0;
-					mem_axi_rdata <= 0;
-					//maybe add mem_axi_arready <= 1; if youre facing problems when using the memory without resetting
-					if (mem_axi_arvalid && mem_axi_arready) begin
-						mem_read_addr_buffer <= mem_axi_araddr;
+					mem_axi.rvalid <= 0;
+					mem_axi.rdata <= 0;
+					//maybe add mem_axi.arready <= 1; if youre facing problems when using the memory without resetting
+					if (mem_axi.arvalid && mem_axi.arready) begin
+						mem_read_addr_buffer <= mem_axi.araddr;
 						read_fsm <= load;
 					end
 				end
 
 				load: begin 
-					mem_axi_rvalid <= 0;
-					mem_axi_rdata <= 0;
+					mem_axi.rvalid <= 0;
+					mem_axi.rdata <= 0;
 
 					//note: do this word_index dance in write logic too
 
@@ -86,7 +66,7 @@ module simple_mem_axi #(
 							read_fsm <= hold;
 						end else read_fsm <= read_capture;
 
-						mem_axi_arready <= 0;
+						mem_axi.arready <= 0;
 					end
 					else if ((mem_read_addr_buffer >= RAM_ORIGIN && mem_read_addr_buffer < RAM_ORIGIN + RAM_LENGTH)) begin
 
@@ -97,20 +77,20 @@ module simple_mem_axi #(
 							read_fsm <= hold;
 						end else read_fsm <= read_capture;
 
-						mem_axi_arready <= 0;
+						mem_axi.arready <= 0;
 					end
 					else begin 
 						read_fsm <= read_capture;
-						mem_axi_arready <= 1;
+						mem_axi.arready <= 1;
 					end
 				end
 
 				hold: begin 
-					mem_axi_rvalid <= 1;
-					mem_axi_rdata <= mem_read_buffer;
-					if (mem_axi_rready) begin
+					mem_axi.rvalid <= 1;
+					mem_axi.rdata <= mem_read_buffer;
+					if (mem_axi.rready) begin
 						read_fsm <= read_capture;
-						mem_axi_arready <= 1;
+						mem_axi.arready <= 1;
 					end
 				end
 
@@ -136,17 +116,17 @@ module simple_mem_axi #(
 			mem_write_buffer <= 0;
 			mem_write_addr_buffer <= 0;
 			write_word_index <= 0;
-			mem_axi_awready <= 1;
-			mem_axi_wready <= 0;
+			mem_axi.awready <= 1;
+			mem_axi.wready <= 0;
 			write_fsm <= write_capture;
 			debug <= 0;
 		end else begin 
 			case (write_fsm)
 				write_capture: begin 
-					mem_axi_bvalid <= 0;
-					if (mem_axi_awvalid && mem_axi_awready) begin
-						mem_axi_wready <= 1;
-						mem_write_addr_buffer <= mem_axi_awaddr;
+					mem_axi.bvalid <= 0;
+					if (mem_axi.awvalid && mem_axi.awready) begin
+						mem_axi.wready <= 1;
+						mem_write_addr_buffer <= mem_axi.awaddr;
 						write_fsm <= store;
 					end
 				end
@@ -155,37 +135,37 @@ module simple_mem_axi #(
 					if ((mem_write_addr_buffer >= ROM_ORIGIN && mem_write_addr_buffer < ROM_ORIGIN + ROM_LENGTH)) begin
 						write_word_index = (mem_write_addr_buffer >> 2);
 
-						if (mem_axi_wvalid && mem_axi_wready) begin
+						if (mem_axi.wvalid && mem_axi.wready) begin
 							if (write_word_index < MEM_WORDS) begin 
-								if (mem_axi_wstrb[0]) memory[write_word_index][ 7: 0] <= mem_axi_wdata[ 7: 0];
-								if (mem_axi_wstrb[1]) memory[write_word_index][15: 8] <= mem_axi_wdata[15: 8];
-								if (mem_axi_wstrb[2]) memory[write_word_index][23:16] <= mem_axi_wdata[23:16];
-								if (mem_axi_wstrb[3]) memory[write_word_index][31:24] <= mem_axi_wdata[31:24];
+								if (mem_axi.wstrb[0]) memory[write_word_index][ 7: 0] <= mem_axi.wdata[ 7: 0];
+								if (mem_axi.wstrb[1]) memory[write_word_index][15: 8] <= mem_axi.wdata[15: 8];
+								if (mem_axi.wstrb[2]) memory[write_word_index][23:16] <= mem_axi.wdata[23:16];
+								if (mem_axi.wstrb[3]) memory[write_word_index][31:24] <= mem_axi.wdata[31:24];
 								write_fsm <= respond;
 							end else write_fsm <= write_capture;
-						end else if (mem_axi_awvalid && mem_axi_awready) write_fsm <= store;
+						end else if (mem_axi.awvalid && mem_axi.awready) write_fsm <= store;
 						else write_fsm <= write_capture;
 					end else if ((mem_write_addr_buffer >= RAM_ORIGIN && mem_write_addr_buffer < RAM_ORIGIN + RAM_LENGTH)) begin
 						write_word_index = (mem_write_addr_buffer >> 2);
 
-						if (mem_axi_wvalid && mem_axi_wready) begin
+						if (mem_axi.wvalid && mem_axi.wready) begin
 							if (write_word_index < MEM_WORDS) begin 
 								debug <= 1;
-								if (mem_axi_wstrb[0]) memory[write_word_index][ 7: 0] <= mem_axi_wdata[ 7: 0];
-								if (mem_axi_wstrb[1]) memory[write_word_index][15: 8] <= mem_axi_wdata[15: 8];
-								if (mem_axi_wstrb[2]) memory[write_word_index][23:16] <= mem_axi_wdata[23:16];
-								if (mem_axi_wstrb[3]) memory[write_word_index][31:24] <= mem_axi_wdata[31:24];
+								if (mem_axi.wstrb[0]) memory[write_word_index][ 7: 0] <= mem_axi.wdata[ 7: 0];
+								if (mem_axi.wstrb[1]) memory[write_word_index][15: 8] <= mem_axi.wdata[15: 8];
+								if (mem_axi.wstrb[2]) memory[write_word_index][23:16] <= mem_axi.wdata[23:16];
+								if (mem_axi.wstrb[3]) memory[write_word_index][31:24] <= mem_axi.wdata[31:24];
 								write_fsm <= respond;
 							end else write_fsm <= write_capture;
-						end else if (mem_axi_awvalid && mem_axi_awready) write_fsm <= store;
+						end else if (mem_axi.awvalid && mem_axi.awready) write_fsm <= store;
 						else write_fsm <= write_capture;
 					end else write_fsm <= write_capture;
 					end
 
 				respond: begin
-					mem_axi_bvalid <= 1;
-					mem_axi_wready <= 0;
-					if (mem_axi_bready) begin
+					mem_axi.bvalid <= 1;
+					mem_axi.wready <= 0;
+					if (mem_axi.bready) begin
 						write_fsm <= write_capture;
 					end
 				end

@@ -5,10 +5,12 @@ vmap work work
 # Compile design RTL (adjust path if needed)
 # If you want compressed-isa defines like the Makefile, use +define+COMPRESSED_ISA
 vlog ../rtl/picorv32.v
-vlog ../rtl/simple_mem_axi.sv
+vlog ../rtl/simple_mem_axi_mux.sv
 vlog ../rtl/simpleuart.v
-vlog ../rtl/uart_axi_adapter.sv
+vlog ../rtl/simpleuart_axi_adapter_mux.sv
 vlog ../rtl/top_uart_axi.sv
+vlog ../rtl/axi_interf.sv
+vlog ../rtl/axi_mux.sv
 
 # Compile the tiny testbench (file in current dir)
 vlog ../tb/testbench_3_uart_axi.sv
@@ -16,11 +18,17 @@ vlog ../tb/testbench_3_uart_axi.sv
 # Launch simulation with accessibility for internal signals
 vsim work.testbench_3_uart_axi -voptargs="+acc"
 
+# -------------------------------------------------------
+# Clock + Reset
+# -------------------------------------------------------
 add wave -divider "Clock and Reset"
 add wave sim:/testbench_3_uart_axi/clk
 add wave sim:/testbench_3_uart_axi/resetn
 
-add wave -divider "uart signals"
+# -------------------------------------------------------
+# UART internal signals
+# -------------------------------------------------------
+add wave -divider "UART module signals"
 add wave sim:/testbench_3_uart_axi/dut/uart/ser_tx
 add wave sim:/testbench_3_uart_axi/dut/uart/ser_rx
 
@@ -34,51 +42,43 @@ add wave sim:/testbench_3_uart_axi/dut/uart/reg_dat_di
 add wave sim:/testbench_3_uart_axi/dut/uart/reg_dat_do
 add wave sim:/testbench_3_uart_axi/dut/uart/reg_dat_wait
 
-add wave -divider "AXI Interface signals"
+# -------------------------------------------------------
+# UART FSM signals (internal simpleuart_axi_adapter_mux)
+# -------------------------------------------------------
+add wave -divider "UART Read FSM"
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/read_fsm
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/mem_read_addr_buffer
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/mem_read_buffer
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/read_word_index
 
-add wave -divider "Clock and Reset"
-add wave sim:/testbench_3_uart_axi/clk
-add wave sim:/testbench_3_uart_axi/resetn
+add wave -divider "UART Write FSM"
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/write_fsm
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/write_word_index
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/mem_write_addr_buffer
+add wave sim:/testbench_3_uart_axi/dut/uart_adapter/debug
 
-add wave -divider "read signals"
-add wave sim:/testbench_3_uart_axi/dut/mem/read_fsm
-add wave -divider "   - Read Address Channel"
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_arvalid
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_arready
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_araddr
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_arprot
+# -------------------------------------------------------
+# AXI Routing Through MUX (optional)
+# -------------------------------------------------------
 
-add wave -divider "   - Read Data Channel"
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_rvalid
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_rready
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_rdata
+add wave -divider "AXI Mux Output → Slave1 (uart_axi)"
+add wave sim:/testbench_3_uart_axi/dut/uart_axi/*
 
-add wave -divider "Clock and Reset"
-add wave sim:/testbench_3_uart_axi/clk
-add wave sim:/testbench_3_uart_axi/resetn
+add wave -divider "AXI Mux Output → Slave0 (mem_axi)"
+add wave sim:/testbench_3_uart_axi/dut/mem_axi/*
 
-add wave -divider "write signals"
-add wave sim:/testbench_3_uart_axi/dut/mem/write_fsm
-add wave sim:/testbench_3_uart_axi/dut/mem/write_word_index
-add wave sim:/testbench_3_uart_axi/dut/mem/mem_write_addr_buffer
-add wave sim:/testbench_3_uart_axi/dut/mem/debug
+# -------------------------------------------------------
+# AXI Interface Observability
+# -------------------------------------------------------
 
-add wave -divider "write signals"
-add wave sim:/testbench_3_uart_axi/dut/mem/write_fsm
-add wave -divider "   - Write Address Channel"
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_awvalid
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_awready
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_awaddr
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_awprot
+add wave -divider "AXI - PICORV32 Master"
+add wave sim:/testbench_3_uart_axi/dut/picorv32_axi/*
 
-add wave -divider "   - Write Data Channel"
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_wvalid
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_wready
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_wdata
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_wstrb
+add wave -divider "AXI - MEM Slave"
+add wave sim:/testbench_3_uart_axi/dut/mem_axi/*
 
-add wave -divider "   - Write Response Channel"
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_bvalid
-add wave sim:/testbench_3_uart_axi/dut/mem_axi_bready
+add wave -divider "AXI - UART Slave"
+add wave sim:/testbench_3_uart_axi/dut/uart_axi/*
+
 
 run 2us

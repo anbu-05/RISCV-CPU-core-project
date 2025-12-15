@@ -47,6 +47,8 @@ module simpleuart #(parameter integer DEFAULT_DIV = 1) (
 	reg [31:0] send_divcnt;
 	reg send_dummy;
 
+	reg [2:0] debug;
+
 	assign reg_div_do = cfg_divider;
 
 	assign reg_dat_wait = reg_dat_we && (send_bitcnt || send_dummy);
@@ -117,17 +119,20 @@ module simpleuart #(parameter integer DEFAULT_DIV = 1) (
 			send_dummy <= 1;
 		end else begin
 			if (send_dummy && !send_bitcnt) begin
+				debug = 1;
 				send_pattern <= ~0;
 				send_bitcnt <= 15;
 				send_divcnt <= 0;
 				send_dummy <= 0;
-			end else
-			if (reg_dat_we && !send_bitcnt) begin
+			end 
+			else if (reg_dat_we && !send_bitcnt) begin
+				debug = 2;
 				send_pattern <= {1'b1, reg_dat_di[7:0], 1'b0};
 				send_bitcnt <= 10;
 				send_divcnt <= 0;
-			end else
-			if (send_divcnt > cfg_divider && send_bitcnt) begin
+			end 
+			else if (send_divcnt > cfg_divider && send_bitcnt) begin
+				debug = 3;
 				send_pattern <= {1'b1, send_pattern[9:1]};
 				send_bitcnt <= send_bitcnt - 1;
 				send_divcnt <= 0;

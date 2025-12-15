@@ -1,5 +1,5 @@
-module simpleuart_axi_adapter #(
-    parameter MEM_WORDS = 3,
+module simpleuart_axi_adapter_mux #(
+    parameter MEM_WORDS = 4,
     parameter REG_ORIGIN = 32'h00018000,
     parameter REG_LENGTH = 32'h0000000c
 ) (
@@ -7,27 +7,7 @@ module simpleuart_axi_adapter #(
 
 	// AXI4-lite slave memory interface
 
-	input  logic        mem_axi_awvalid,
-	output logic        mem_axi_awready,
-	input  logic [31:0] mem_axi_awaddr,
-	input  logic [ 2:0] mem_axi_awprot,
-
-	input  logic        mem_axi_wvalid,
-	output logic        mem_axi_wready,
-	input  logic [31:0] mem_axi_wdata,
-	input  logic [ 3:0] mem_axi_wstrb,
-
-	output logic        mem_axi_bvalid,
-	input  logic        mem_axi_bready,
-
-	input  logic        mem_axi_arvalid,
-	output logic        mem_axi_arready,
-	input  logic [31:0] mem_axi_araddr,
-	input  logic [ 2:0] mem_axi_arprot,
-
-	output logic        mem_axi_rvalid,
-	input  logic        mem_axi_rready,
-	output logic [31:0] mem_axi_rdata,
+	axi_interf.slave uart_axi,
 
     //simpleuart interface
 
@@ -51,6 +31,12 @@ module simpleuart_axi_adapter #(
 logic [31:0] uart_div_do_buffer;
 logic [31:0] uart_dat_do_buffer;
 
+logic debug = 0;
+
+//---wait feedback to core---
+assign memory[0][0] = !reg_dat_wait; //TX_READY
+
+
 //---------axi read logic---------
 
 	logic [31:0] mem_read_buffer;
@@ -65,26 +51,38 @@ logic [31:0] uart_dat_do_buffer;
 		if (!resetn) begin 
 			mem_read_buffer <= 0;
 			mem_read_addr_buffer <= 0;
-			mem_axi_rvalid <= 0;
-			mem_axi_rdata <= 0;
-			mem_axi_arready <= 1; //note, you'll need to control arready even during write logic, hence im not setting it to anything in the read_capture fsm
+			uart_axi.rvalid <= 0;
+			uart_axi.rdata <= 0;
+			uart_axi.arready <= 1; //note, you'll need to control arready even during write logic, hence im not setting it to anything in the read_capture fsm
 			//further note: the fsm wont move on from read_capture state unless you reset it once. this is because arread is left floating till reset is applied
 			read_fsm <= read_capture;
+
+			read_word_index <= 0;
+
+			//---initializing uart module---
+
+			ser_rx <= 1;
+			reg_dat_re <= 0;
+
 		end else begin 
 			case (read_fsm)
 				read_capture: begin 
-					mem_axi_rvalid <= 0;
-					mem_axi_rdata <= 0;
-					//maybe add mem_axi_arready <= 1; if youre facing problems when using the memory without resetting
-					if (mem_axi_arvalid && mem_axi_arready) begin
-						mem_read_addr_buffer <= mem_axi_araddr;
+					uart_axi.rvalid <= 0;
+					uart_axi.rdata <= 0;
+					//maybe add uart_axi.arready <= 1; if youre facing problems when using the memory without resetting
+					
+					ser_rx <= 1;
+					reg_dat_re <= 0;
+
+					if (uart_axi.arvalid && uart_axi.arready) begin
+						mem_read_addr_buffer <= uart_axi.araddr;
 						read_fsm <= load;
 					end
 				end
 
 				load: begin 
-					mem_axi_rvalid <= 0;
-					mem_axi_rdata <= 0;
+					uart_axi.rvalid <= 0;
+					uart_axi.rdata <= 0;
 
 					//note: do this word_index dance in write logic too
 
@@ -105,19 +103,19 @@ logic [31:0] uart_dat_do_buffer;
                             read_fsm <= hold;
 						end else read_fsm <= read_capture;
 
-						mem_axi_arready <= 0;
+						uart_axi.arready <= 0;
 					end else begin 
 						read_fsm <= read_capture;
-						mem_axi_arready <= 1;
+						uart_axi.arready <= 1;
 					end
 				end
 
 				hold: begin 
-					mem_axi_rvalid <= 1;
-					mem_axi_rdata <= mem_read_buffer;
-					if (mem_axi_rready) begin
+					uart_axi.rvalid <= 1;
+					uart_axi.rdata <= mem_read_buffer;
+					if (uart_axi.rready) begin
 						read_fsm <= read_capture;
-						mem_axi_arready <= 1;
+						uart_axi.arready <= 1;
 					end
 				end
 
@@ -140,58 +138,71 @@ logic [31:0] uart_dat_do_buffer;
 		if (!resetn) begin 
 			mem_write_buffer <= 0;
 			mem_write_addr_buffer <= 0;
-			mem_axi_awready <= 1;
-			mem_axi_wready <= 0;
+			uart_axi.awready <= 1;
+			uart_axi.wready <= 0;
 			write_fsm <= write_capture;
+
+			write_word_index <= 0;
+
+			//---initializing uart module---
+
+			reg_div_di <= 0;
+			reg_div_we <= 0;
+			reg_dat_we <= 0;
+			reg_dat_di <= 0;
+
 		end else begin 
 			case (write_fsm)
 				write_capture: begin 
-					mem_axi_bvalid <= 0;
-					if (mem_axi_awvalid && mem_axi_awready) begin
-						mem_axi_wready <= 1;
-						mem_write_addr_buffer <= mem_axi_awaddr;
+					uart_axi.bvalid <= 0;
+
+					reg_div_we <= 0;
+					reg_dat_we <= 0;
+
+					if (uart_axi.awvalid && uart_axi.awready) begin
+						uart_axi.wready <= 1;
+						mem_write_addr_buffer <= uart_axi.awaddr;
 						write_fsm <= store;
 					end
 				end
 
 				store: begin
-						if (mem_axi_wvalid && mem_axi_wready) begin
+						if (uart_axi.wvalid && uart_axi.wready) begin
 							if ((mem_write_addr_buffer >= REG_ORIGIN && mem_write_addr_buffer < REG_ORIGIN + REG_LENGTH)) begin
 
 								write_word_index = (mem_write_addr_buffer) >> 2;
 
 								if (write_word_index < MEM_WORDS) begin 
-                                    if (!reg_dat_wait) begin
-                                        if (mem_axi_wstrb[0]) memory[write_word_index][ 7: 0] <= mem_axi_wdata[ 7: 0];
-                                        if (mem_axi_wstrb[1]) memory[write_word_index][15: 8] <= mem_axi_wdata[15: 8];
-                                        if (mem_axi_wstrb[2]) memory[write_word_index][23:16] <= mem_axi_wdata[23:16];
-                                        if (mem_axi_wstrb[3]) memory[write_word_index][31:24] <= mem_axi_wdata[31:24];
-
-                                //---------uart transmit logic---------
-                                        if (write_word_index == 1) begin 
-                                            reg_div_we <= mem_axi_wstrb;
-                                            reg_div_di <= memory[write_word_index];
-                                        end else if (write_word_index == 2) begin
-                                            reg_dat_we <= mem_axi_wstrb;
-                                            reg_dat_di <= memory[write_word_index];
-                                        end
-                                        write_fsm <= respond;
-                                    end else write_fsm <= store; //we're gonna need to do something to make sure that the cpu doesnt send the next byte of data. idk if this would do that
+									//---------uart transmit logic---------
+									if (write_word_index == 1 && !reg_dat_wait) begin 
+										reg_div_di <= uart_axi.wdata;
+										reg_div_we <= uart_axi.wstrb;
+										write_fsm <= respond;
+									end else if (write_word_index == 2 && !reg_dat_wait) begin
+										reg_dat_di <= uart_axi.wdata;
+										reg_dat_we <= 1;
+										write_fsm <= respond;
+									end else begin
+										write_fsm <= store;
+									end
 								end else write_fsm <= write_capture;
                             end else begin 
 								write_fsm <= write_capture;
 							end
-						end else if (mem_axi_awvalid && mem_axi_awready) write_fsm <= store;
+						end else if (uart_axi.awvalid && uart_axi.awready) write_fsm <= store;
 						else write_fsm <= write_capture;
 					end
 
 				respond: begin
-					mem_axi_bvalid <= 1;
-					mem_axi_wready <= 0;
-					if (mem_axi_bready) begin
-						write_fsm <= write_capture;
+						uart_axi.bvalid <= 1;
+						uart_axi.wready <= 0;
+
+						if (!reg_dat_wait) begin
+							reg_div_we <= 0;
+							reg_dat_we <= 0;		
+							write_fsm <= write_capture;
+						end else write_fsm <= respond;
 					end
-				end
 
 				default: write_fsm <= write_capture;
 			endcase
