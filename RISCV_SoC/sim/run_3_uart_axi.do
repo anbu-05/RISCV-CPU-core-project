@@ -81,4 +81,4 @@ add wave -divider "AXI - UART Slave"
 add wave sim:/testbench_3_uart_axi/dut/uart_axi/*
 
 
-run 2us
+run 3us
